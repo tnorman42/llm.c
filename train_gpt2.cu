@@ -105,28 +105,35 @@ __global__ void layernorm_forward_kernel3(float* __restrict__ out, float* __rest
     // the row of input that this group of threads is responsible for
     const float* x = inp + idx * C;
 
-    // mean
+    // mean & rstd
     float sum = 0.0f;
+    float sum_sq = 0.0f;
     for (int i = warp.thread_rank(); i < C; i += warp.size()) {
         sum += x[i];
+        sum_sq += x[i] * x[i];
     }
     sum = cg::reduce(warp, sum, cg::plus<float>{});
     float m = sum / C;
+    sum_sq = cg::reduce(warp, sum_sq, cg::plus<float>{});
+    sum_sq = rsqrtf(sum_sq / C - m * m + 1e-5f);
     if(warp.thread_rank() == 0 && mean != nullptr) {
         __stcs(mean + idx, m);
     }
+    if(warp.thread_rank() == 0 && rstd != nullptr) {
+        __stcs(rstd + idx, sum_sq);
+    }
 
     // rstd
-    sum = 0.0f;
-    for (int i = warp.thread_rank(); i < C; i += warp.size()) {
-        float diff = x[i] - m;
-        sum += diff * diff;
-    }
-    sum = cg::reduce(warp, sum, cg::plus<float>{});
-    float s = rsqrtf(sum / C + 1e-5f);
-    if(warp.thread_rank() == 0 && rstd != nullptr) {
-        __stcs(rstd + idx, s);
-    }
+    // sum = 0.0f;
+    // for (int i = warp.thread_rank(); i < C; i += warp.size()) {
+    //     float diff = x[i] - m;
+    //     sum += diff * diff;
+    // }
+    // sum = cg::reduce(warp, sum, cg::plus<float>{});
+    // float s = rsqrtf(sum / C + 1e-5f);
+    // if(warp.thread_rank() == 0 && rstd != nullptr) {
+    //     __stcs(rstd + idx, s);
+    // }
 
     // final normalization and scaling by weight/bias
     float* o = out + idx * C;
@@ -1203,6 +1210,7 @@ int main() {
     unsigned long long rng_state = 1337;
     const int gen_max_length = 64;
     int gen_tokens[gen_max_length];
+    for (int i = 0; i < gen_max_length; i++) { gen_tokens[i] = GPT2_EOT; }
     float* cpu_probs = (float*)malloc(model.config.vocab_size * sizeof(float));
 
     // train
