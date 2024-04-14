@@ -115,12 +115,12 @@ __global__ void layernorm_forward_kernel3(float* __restrict__ out, float* __rest
     sum = cg::reduce(warp, sum, cg::plus<float>{});
     float m = sum / C;
     sum_sq = cg::reduce(warp, sum_sq, cg::plus<float>{});
-    sum_sq = rsqrtf(sum_sq / C - m * m + 1e-5f);
+    float s = rsqrtf(sum_sq / C - m * m + 1e-5f);
     if(warp.thread_rank() == 0 && mean != nullptr) {
         __stcs(mean + idx, m);
     }
     if(warp.thread_rank() == 0 && rstd != nullptr) {
-        __stcs(rstd + idx, sum_sq);
+        __stcs(rstd + idx, s);
     }
 
     // rstd
